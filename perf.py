@@ -3,12 +3,12 @@ from functools import partial
 from typing import Dict, List, Union
 
 import torch
-from torch.fx import GraphModule
+from torch.fx import GraphModule, passes
 from transformers import AutoModelForSequenceClassification
 from transformers.utils.fx import symbolic_trace
 
 from FxGraphOptimizer.passes import (DeadCodeEliminationPass,
-                                     FuseDivIntoQKPass,
+                                     FuseAttentionPass,
                                      MergeLinearWithSameSource,
                                      RemoveDropoutPass)
 
@@ -54,9 +54,9 @@ def benchmark(
     )
 
     for PASS in [
-        FuseDivIntoQKPass,
         MergeLinearWithSameSource,
         RemoveDropoutPass,
+        FuseAttentionPass,
         DeadCodeEliminationPass
     ]:
         fx_model = PASS()(fx_model)

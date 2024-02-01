@@ -4,7 +4,8 @@ from typing import Any, List, Set, Tuple, Union
 
 import torch
 import torch.nn as nn
-from torch.fx import Graph, GraphModule, Node, symbolic_trace
+import torch.nn.functional as F
+from torch.fx import Graph, GraphModule, Node, replace_pattern
 from torch.fx.passes.tools_common import legalize_graph
 
 
@@ -167,7 +168,7 @@ class FuseDivIntoQKPass(GraphTransformPass):
     """
     acceptable_relay_nodes : Set[Tuple[str, Any]] = {
         # shape-related operations which don't alter value
-        ('call_method', 'size')
+        ('call_method', 'size'),
         ('call_method', 'transpose'),
         ('call_method', 'permute'),
         ('call_method', 'contiguous'),
@@ -254,6 +255,32 @@ class FuseDivIntoQKPass(GraphTransformPass):
 
         return graph
 
+
+class FuseAttentionPass(GraphTransformPass):
+    """This might not generalize to other attention patterns, just a quick
+    hack to bert traced from `transformers` library
+    """
+    @staticmethod
+    def original_pattern(q : torch.Tensor, k : torch.Tensor, v : torch.Tensor, attn_mask : torch.Tensor):
+        return torch.matmul(
+            F.softmax(torch.matmul(q.view(q.size()[slice(None, -1, None)] + (12,64)).permute(0,2,1,3), \
+                k.view(k.size()[slice(None, -1, None)] + (12, 64)).permute(0,2,1,3).transpose(-1,-2)) / 8.0 \
+                + attn_mask, dim = -1, _stacklevel = 3, dtype=None), 
+                v.view(v.size()[slice(None, -1, None)] + (12, 64)).permute(0,2,1,3)
+            )
+    @staticmethod
+    def replace_pattern(q : torch.Tensor, k : torch.Tensor, v : torch.Tensor, attn_mask : torch.Tensor):
+        return F.scaled_dot_product_attention(q.view(q.size()[slice(None, -1, None)] + (12,64)).permute(0,2,1,3), \
+            k.view(k.size()[slice(None, -1, None)] + (12, 64)).permute(0,2,1,3), \
+            v.view(v.size()[slice(None, -1, None)] + (12, 64)).permute(0,2,1,3), \
+            attn_mask = attn_mask
+        )
+    
+    def __call__(self, graph: GraphModule) -> GraphModule:
+        replace_pattern(graph, self.original_pattern, self.replace_pattern)
+        graph.recompile()
+        graph.graph.lint()
+        return graph
 
 
 # class ShapeRelatedNodeAnnotationPass(GraphTransformPass):
