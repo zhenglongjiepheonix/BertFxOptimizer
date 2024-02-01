@@ -167,7 +167,7 @@ class FuseDivIntoQKPass(GraphTransformPass):
     """
     acceptable_relay_nodes : Set[Tuple[str, Any]] = {
         # shape-related operations which don't alter value
-
+        ('call_method', 'size')
         ('call_method', 'transpose'),
         ('call_method', 'permute'),
         ('call_method', 'contiguous'),
@@ -177,6 +177,12 @@ class FuseDivIntoQKPass(GraphTransformPass):
         ('call_function', torch.permute),
         ('call_function', torch.reshape),
     }
+
+    def can_fuse(self, node : Node) -> bool:
+        for user in node.users:
+            if not((user.op, user.target) in self.acceptable_relay_nodes):
+                return False
+        return True
 
 
     def process(
@@ -195,7 +201,7 @@ class FuseDivIntoQKPass(GraphTransformPass):
         
         if lhs.op == 'call_module':
             mod = graph.get_submodule(lhs.target)
-            if isinstance(mod, nn.Linear):
+            if isinstance(mod, nn.Linear) and self.can_fuse(lhs):
                 try:
                     with torch.no_grad():
                         mod.weight.true_divide_(d_k)
@@ -212,7 +218,7 @@ class FuseDivIntoQKPass(GraphTransformPass):
                 rhs = rhs.args[0]
             if rhs.op == 'call_module':
                 mod = graph.get_submodule(rhs.target)
-                if isinstance(mod, nn.Linear):
+                if isinstance(mod, nn.Linear) and self.can_fuse(rhs):
                     try:
                         with torch.no_grad():
                             mod.weight.true_divide_(d_k)
