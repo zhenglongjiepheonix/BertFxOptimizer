@@ -263,18 +263,14 @@ class FuseAttentionPass(GraphTransformPass):
     @staticmethod
     def original_pattern(q : torch.Tensor, k : torch.Tensor, v : torch.Tensor, attn_mask : torch.Tensor):
         return torch.matmul(
-            F.softmax(torch.matmul(q.view(q.size()[slice(None, -1, None)] + (12,64)).permute(0,2,1,3), \
-                k.view(k.size()[slice(None, -1, None)] + (12, 64)).permute(0,2,1,3).transpose(-1,-2)) / 8.0 \
+            F.softmax(torch.matmul(q, \
+                k.transpose(-1,-2)) / 8.0 \
                 + attn_mask, dim = -1, _stacklevel = 3, dtype=None), 
-                v.view(v.size()[slice(None, -1, None)] + (12, 64)).permute(0,2,1,3)
+                v
             )
     @staticmethod
     def replace_pattern(q : torch.Tensor, k : torch.Tensor, v : torch.Tensor, attn_mask : torch.Tensor):
-        return F.scaled_dot_product_attention(q.view(q.size()[slice(None, -1, None)] + (12,64)).permute(0,2,1,3), \
-            k.view(k.size()[slice(None, -1, None)] + (12, 64)).permute(0,2,1,3), \
-            v.view(v.size()[slice(None, -1, None)] + (12, 64)).permute(0,2,1,3), \
-            attn_mask = attn_mask
-        )
+        return F.scaled_dot_product_attention(q, k, v, attn_mask = attn_mask)
     
     def __call__(self, graph: GraphModule) -> GraphModule:
         replace_pattern(graph, self.original_pattern, self.replace_pattern)
